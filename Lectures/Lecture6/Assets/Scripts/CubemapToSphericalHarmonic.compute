@@ -1,5 +1,4 @@
-﻿﻿// Each #kernel tells which function to compile; you can have many kernels
-#pragma kernel ComputeHarmonics
+﻿#pragma kernel ComputeHarmonics
 
 #define PI            3.14159265359f
 #define TWO_PI        6.28318530718f
@@ -9,6 +8,9 @@
 #define INV_FOUR_PI   0.07957747155f
 #define HALF_PI       1.57079632679f
 #define INV_HALF_PI   0.636619772367f
+
+#include <HLSLSupport.cginc>
+#include <UnityCG.cginc>
 
 RWStructuredBuffer<float4> SH_0_1_r;
 RWStructuredBuffer<float4> SH_0_1_g;
@@ -45,37 +47,102 @@ float3 SampleColor(float3 direction)
     return tex.rgb;
 }
 
+float Sqr(float x)
+{
+    return x * x;
+}
+
+float3 SpecularHarmonic(float3 w, int l, int m) 
+{
+    float3 SQRT_UNITY_PI = sqrt(UNITY_PI);
+    
+    if (l == 0)
+        return 1 / (2 * SQRT_UNITY_PI);
+    if (l == 1)
+    {
+        if (m == -1)
+            return -sqrt(3) * w.y / (2 * SQRT_UNITY_PI);
+        if (m == 0)
+            return sqrt(3) * w.z / (2 * SQRT_UNITY_PI);
+        if (m == 1)
+            return -sqrt(3) * w.x / (2 * SQRT_UNITY_PI);
+    }
+    if (l == 2) 
+    {
+        if (m == -2)
+            return sqrt(15) * w.y * w.x / (2 * SQRT_UNITY_PI);
+        if (m == -1)
+            return -sqrt(15) * w.y * w.z / (2 * SQRT_UNITY_PI);
+        if (m == 0)
+            return sqrt(5) * (3 * Sqr(w.z) - 1) / (4 * SQRT_UNITY_PI);
+        if (m == 1)
+            return -sqrt(15) * w.x * w.z / (2 * SQRT_UNITY_PI);
+        if (m == 2)
+            return sqrt(15) * (Sqr(w.x) - Sqr(w.y)) / (4 * SQRT_UNITY_PI);
+    }
+    return float3(0, 0, 0);
+}
+
+float SpecularHarmonicCoeff(int l, int m)
+{
+    if (l == 2)
+    {
+        if (m == 0)
+            return sqrt(5) / (4 * sqrt(UNITY_PI));
+        if (m == 2)
+            return sqrt(15) / (4 * sqrt(UNITY_PI));
+    }
+
+    return SpecularHarmonic(float3(1, 1, 1), l, m);
+}
+
+fixed3 GetRandomPointOnSphere(int i)
+{
+    fixed a = 2 * UNITY_PI * Random(i);
+    fixed cosTheta = 2 * Random(i + 1) - 1;
+    fixed sinTheta = sqrt(1 - Sqr(cosTheta));
+    return fixed3(cos(a) * sinTheta, sin(a) * sinTheta, cosTheta);
+}
+
 [numthreads(1024, 1, 1)]
 void ComputeHarmonics(uint id : SV_DispatchThreadID)
 {
     const int THREADS = 1024;
     const int SAMPLES = 100;
-    
-    // See SH.shader for more details
-    float4 results[7] = {
-        float4(0, 0, 0, 0), // SH_0_1_r
-        float4(0, 0, 0, 0), // SH_0_1_g
-        float4(0, 0, 0, 0), // SH_0_1_b
-        
-        float4(0, 0, 0, 0), // SH_2_r
-        float4(0, 0, 0, 0), // SH_2_g
-        float4(0, 0, 0, 0), // SH_2_b
-        
-        float4(0, 0, 0, 0), // SH_2_rgb
-    };
-    
+
     // Populate results buffer using monte-carlo method.
     // You can see the Random(i) function. Use it just as with the previous task.
     
     // TASK: project light from _Env to spherical harmonic coefficients and store them in results[]
     
-    SH_0_1_r[id] = results[0];
-    SH_0_1_g[id] = results[1];
-    SH_0_1_b[id] = results[2];
-    
-    SH_2_r[id] = results[3];
-    SH_2_g[id] = results[4];
-    SH_2_b[id] = results[5];    
-    
-    SH_2_rgb[id] = results[6];
+    float C[3] = {UNITY_PI, UNITY_TWO_PI / 3, UNITY_PI / 4};
+    float3 color[3][5];
+
+    for (int l = 0; l <= 2; l++)
+    {
+        for (int m = -l; m <= l; m++)
+        {
+            color[l][m + l] = float3(0, 0, 0);
+
+            for (int i = 0; i < SAMPLES; i++)
+            {
+                float3 w = normalize(GetRandomPointOnSphere(i));
+                color[l][m + l] += SampleColor(w) * SpecularHarmonic(w, l, m);
+            }
+
+            color[l][m + l] *= 4.0 / SAMPLES;
+            color[l][m + l] *= C[l];
+            color[l][m + l] *= SpecularHarmonicCoeff(l, m);
+        }
+    }
+
+    SH_0_1_r[id] = float4(color[1][2].x, color[1][0].x, color[1][1].x, color[0][0].x);
+    SH_0_1_g[id] = float4(color[1][2].y, color[1][0].y, color[1][1].y, color[0][0].y);
+    SH_0_1_b[id] = float4(color[1][2].z, color[1][0].z, color[1][1].z, color[0][0].z);
+  
+    SH_2_r[id] = float4(color[2][0].x, color[2][1].x, color[2][3].x, color[2][2].x);
+    SH_2_g[id] = float4(color[2][0].y, color[2][1].y, color[2][3].y, color[2][2].y);
+    SH_2_b[id] = float4(color[2][0].z, color[2][1].z, color[2][3].z, color[2][2].z);   
+
+    SH_2_rgb[id] = float4(color[2][4].x, color[2][4].y, color[2][4].z, 0);
 }
