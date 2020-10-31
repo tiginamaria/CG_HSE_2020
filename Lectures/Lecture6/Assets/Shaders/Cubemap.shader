@@ -89,6 +89,31 @@
                 return a2 / (UNITY_PI * Sqr(NDotH2 * (a2 - 1) + 1));
             }
 
+            fixed3 GetRandomPointOnSphere(int i)
+            {
+                fixed a = 2 * UNITY_PI * Random(i);
+                fixed cosTheta = 2 * Random(i + 1) - 1;
+                fixed sinTheta = sqrt(1 - Sqr(cosTheta));
+                return fixed3(cos(a) * sinTheta, sin(a) * sinTheta, cosTheta);
+            }
+            
+            fixed3 MontecarloColor(float3 normal, float3 v, int n = 25000)
+            {
+                fixed3 color = 0;
+                fixed brdfNorm = 0;
+                for (int i = 0; i < n; i++)
+                {
+                    fixed3 w = normalize(GetRandomPointOnSphere(i));
+                    fixed cosine = dot(normal, w);
+                    if (cosine > 0) {
+                        fixed3 coef = GetSpecularBRDF(v, w, normal) * cosine;
+                        brdfNorm += coef;
+                        color += SampleColor(w) * coef;
+                    }
+                }
+                return color / brdfNorm;
+            }
+
             fixed4 frag (v2f i) : SV_Target
             {
                 float3 normal = normalize(i.normal);
@@ -98,9 +123,7 @@
                 // Replace this specular calculation by Montecarlo.
                 // Normalize the BRDF in such a way, that integral over a hemysphere of (BRDF * dot(normal, w')) == 1
                 // TIP: use Random(i) to get a pseudo-random value.
-                float3 viewRefl = reflect(-viewDirection.xyz, normal);
-                float3 specular = SampleColor(viewRefl);
-                
+                fixed3 specular = MontecarloColor(normal, viewDirection);
                 return fixed4(specular, 1);
             }
             ENDCG
